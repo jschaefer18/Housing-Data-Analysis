@@ -1,6 +1,9 @@
+# streamlit run main.py
+
 #%%
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 file_path = 'metro_data.csv'
 df = pd.read_csv(file_path)
 
@@ -34,6 +37,7 @@ long_df.head()
 atlanta = long_df[long_df['RegionName'] == 'Atlanta, GA'].copy()
 atlanta['HomeValue'] = pd.to_numeric(atlanta['HomeValue'], errors='coerce')
 atlanta = atlanta.dropna(subset=['HomeValue'])
+atlanta_avg = atlanta.groupby('Date')['HomeValue'].mean().reset_index()
 
 print(atlanta[['Date', 'HomeValue']].head(10))
 print(atlanta['HomeValue'].describe())
@@ -57,5 +61,7 @@ fig.update_layout(
 
 fig.show()
 
-
+st.title("Atlanta Housing Data")
+fig = px.line(atlanta_avg, x="Date", y="HomeValue", title="GA ZHVI Over Time")
+st.plotly_chart(fig)
 #%%
