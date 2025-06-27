@@ -2,18 +2,18 @@
 
 #%%
 import streamlit as st
-st.set_page_config(page_title="Housing Dashboard", layout="wide")  # MUST be before all Streamlit code
-
 import pandas as pd
 import plotly.express as px
 import warnings
+
+st.set_page_config(page_title="Housing Dashboard", layout="wide")
 warnings.filterwarnings("ignore")
 
-file_path = 'metro_data.csv'
-df = pd.read_csv(file_path)
+# Load housing data
+housing_file_path = 'metro_data.csv'
+df = pd.read_csv(housing_file_path)
 
-# Optionally, show a preview on the page instead of terminal
-st.dataframe(df.head())
+
 #%%
 
 
@@ -32,29 +32,109 @@ long_df = pd.melt(
 # Convert 'Date' to datetime
 long_df['Date'] = pd.to_datetime(long_df['Date'])
 
-# Preview
-long_df.head()
+
+#%%
+
+#%%
+# Load income data
+income_file_path = 'personal_income.csv'
+salary_df = pd.read_csv(income_file_path, skiprows=3)
+
+# Rename + clean
+salary_df.rename(columns={"GeoName": "RegionName"}, inplace=True)
+salary_df["RegionName"] = salary_df["RegionName"].str.strip()
+
+# Narrow to relevant columns
+salary_subset = salary_df[["RegionName", "2015", "2023"]].copy()
+salary_subset.rename(columns={"2015": "Income_2015", "2023": "Income_2023"}, inplace=True)
+
+# Convert and drop bad rows
+salary_subset["Income_2015"] = pd.to_numeric(salary_subset["Income_2015"], errors="coerce")
+salary_subset["Income_2023"] = pd.to_numeric(salary_subset["Income_2023"], errors="coerce")
+salary_subset.dropna(subset=["Income_2015", "Income_2023"], inplace=True)
+
+# Calculate income percent change
+salary_subset["IncomePercentChange"] = (
+    (salary_subset["Income_2023"] - salary_subset["Income_2015"]) / salary_subset["Income_2015"]
+) * 100
+
+
+
 #%%
 
 
 
 #%%
-atlanta = long_df[long_df['RegionName'] == 'Atlanta, GA'].copy()
-atlanta['HomeValue'] = pd.to_numeric(atlanta['HomeValue'], errors='coerce')
-atlanta = atlanta.dropna(subset=['HomeValue'])
-atlanta_avg = atlanta.groupby('Date')['HomeValue'].mean().reset_index()
+# Step 1: Create housing affordability summary (ZHVI % change)
+housing_subset = long_df[long_df['Date'].isin([
+    pd.to_datetime('2015-06-30'),
+    pd.to_datetime('2024-06-30')
+])]
 
-print(atlanta[['Date', 'HomeValue']].head(10))
-print(atlanta['HomeValue'].describe())
+pivot = housing_subset.pivot_table(
+    index='RegionName',
+    columns=housing_subset['Date'].dt.year,
+    values='HomeValue'
+)
 
+pivot.columns = ['ZHVI_2015', 'ZHVI_2024']
+pivot = pivot.dropna()
+
+pivot['PercentChange'] = ((pivot['ZHVI_2024'] - pivot['ZHVI_2015']) / pivot['ZHVI_2015']) * 100
+
+# Drop the national summary row
+salary_subset = salary_subset[salary_subset["RegionName"] != "United States (Metropolitan Portion)"]
+
+# Clean RegionName in salary data to match metro_data.csv format
+# Strip out " (Metropolitan Statistical Area)" suffix
+salary_subset["RegionName"] = salary_subset["RegionName"].str.replace(r"\s*\(.*\)", "", regex=True).str.strip()
+
+# Merge with housing growth data
+combined = pivot.merge(salary_subset, on="RegionName", how="inner")
+
+# Create Affordability Score
+combined["AffordabilityScore"] = combined["IncomePercentChange"] - combined["PercentChange"]
+
+# Show top 10 most affordable regions
+top_affordable = combined.sort_values(by="AffordabilityScore", ascending=False).head(10)
+
+# Streamlit Output
+st.subheader("Top 10 Most Affordable Regions (2015–2024 Housing vs 2015–2023 Income)")
+st.dataframe(top_affordable.style.format({
+    "ZHVI_2015": "${:,.0f}",
+    "ZHVI_2024": "${:,.0f}",
+    "PercentChange": "{:.2f}%",
+    "Income_2015": "${:,.0f}",
+    "Income_2023": "${:,.0f}",
+    "IncomePercentChange": "{:.2f}%",
+    "AffordabilityScore": "{:.2f}"
+}))
+
+
+
+#%%
+
+
+
+
+
+
+#%%
+lafayette = long_df[long_df['RegionName'] == 'Lafayette, LA'].copy()
+lafayette['HomeValue'] = pd.to_numeric(lafayette['HomeValue'], errors='coerce')
+lafayette = lafayette.dropna(subset=['HomeValue'])
+lafayette_avg = lafayette.groupby('Date')['HomeValue'].mean().reset_index()
+
+print(lafayette[['Date', 'HomeValue']].head(10))
+print(lafayette['HomeValue'].describe())
 
 fig = px.line(
-    atlanta,
+    lafayette,
     x='Date',
     y='HomeValue',
-    title='Atlanta, GA Home Values Over Time',
+    title='Lafayette, LA Home Values Over Time',
     labels={'HomeValue': 'ZHVI ($)', 'Date': 'Date'},
-    hover_data={'Date': True, 'HomeValue': ':.2f'}  # Format ZHVI to 2 decimals
+    hover_data={'Date': True, 'HomeValue': ':.2f'}
 )
 
 fig.update_layout(
@@ -66,44 +146,52 @@ fig.update_layout(
 
 fig.show()
 
-st.title("Atlanta Housing Data")
-fig = px.line(atlanta_avg, x="Date", y="HomeValue", title="GA ZHVI Over Time")
+st.title("Lafayette, LA Housing Data")
+fig = px.line(lafayette_avg, x="Date", y="HomeValue", title="Lafayette, LA ZHVI Over Time")
 st.plotly_chart(fig)
 #%%
 
 
 #%%
+# Filter for Wisconsin cities using RegionName suffix
+wi_subset = long_df[
+    (long_df["RegionName"].str.endswith(", WI")) &
+    (long_df["Date"].isin([
+        pd.to_datetime("2015-06-30"),
+        pd.to_datetime("2024-06-30")
+    ]))
+]
 
-# Question 1: “What has become the most affordable region in the U.S. over the past 10 years?”
-# Filter for June 2015 and June 2024 using end-of-month dates
-subset = long_df[long_df['Date'].isin([
-    pd.to_datetime('2015-06-30'),
-    pd.to_datetime('2024-06-30')
-])]
+# Pivot ZHVI for 2015 and 2024
+wi_pivot = wi_subset.pivot_table(index='RegionName', columns=wi_subset['Date'].dt.year, values='HomeValue')
+wi_pivot.columns = ['ZHVI_2015', 'ZHVI_2024']
+wi_pivot.dropna(inplace=True)
 
-# Pivot the data so each RegionName has two columns: 2015 and 2024
-pivot = subset.pivot_table(index='RegionName', columns=subset['Date'].dt.year, values='HomeValue')
+# Calculate percent change in home values
+wi_pivot['PercentChange'] = ((wi_pivot['ZHVI_2024'] - wi_pivot['ZHVI_2015']) / wi_pivot['ZHVI_2015']) * 100
 
-# Rename columns and drop regions with missing values
-pivot.columns = ['ZHVI_2015', 'ZHVI_2024']
-pivot = pivot.dropna()
+# Merge with income data
+merged_wi = wi_pivot.merge(salary_subset, on='RegionName', how='inner')
 
-# Calculate percent change over the 10-year period
-pivot['PercentChange'] = ((pivot['ZHVI_2024'] - pivot['ZHVI_2015']) / pivot['ZHVI_2015']) * 100
+# Calculate affordability score (lower is more affordable)
+merged_wi["AffordabilityScore"] = merged_wi["PercentChange"] / merged_wi["IncomePercentChange"]
 
-# Sort regions by lowest percent increase (most affordable growth)
-most_affordable = pivot.sort_values(by='PercentChange')
+# Sort and get top 10
+top10_wi = merged_wi.sort_values("AffordabilityScore").head(10).reset_index()  # <--- this keeps RegionName as a column
 
-# Show top 10 in terminal
-print("Top 10 Most Affordable ZHVI Growth Regions (2015–2024):")
-print(most_affordable.head(10))
-
-# Streamlit output
-st.subheader("Top 10 Most Affordable Regions (2015–2024)")
-st.dataframe(most_affordable.head(10).style.format({
+# Streamlit display
+st.subheader("Top 10 Most Affordable WI Cities (2015–2024)")
+st.dataframe(top10_wi[[
+    "RegionName", "ZHVI_2015", "ZHVI_2024", "PercentChange",
+    "Income_2015", "Income_2023", "IncomePercentChange", "AffordabilityScore"
+]].style.format({
     "ZHVI_2015": "${:,.0f}",
     "ZHVI_2024": "${:,.0f}",
-    "PercentChange": "{:.2f}%"
+    "PercentChange": "{:.2f}%",
+    "Income_2015": "${:,.0f}",
+    "Income_2023": "${:,.0f}",
+    "IncomePercentChange": "{:.2f}%",
+    "AffordabilityScore": "{:.2f}"
 }))
-
 #%%
+
