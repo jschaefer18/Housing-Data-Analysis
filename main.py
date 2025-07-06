@@ -5,6 +5,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import warnings
+import plotly.graph_objects as go
+from prophet import Prophet
 
 st.set_page_config(page_title="Housing Dashboard", layout="wide")
 warnings.filterwarnings("ignore")
@@ -74,6 +76,8 @@ full_data = full_data.merge(state_scores, on="StateName", how="left")
 # Drop any rows with missing values
 full_data.dropna(subset=["StateScore"], inplace=True)
 
+full_data = full_data[full_data["RegionName"] != "Midland, TX"]
+
 # Calculate weighted score (40% housing, 30% income, 30% state)
 full_data["Score"] = (
     (100 - full_data["PercentChange"]) * 0.4 +
@@ -127,30 +131,105 @@ fig = px.line(johnstown_avg, x="Date", y="HomeValue", title="Johnstown, PA ZHVI 
 st.plotly_chart(fig)
 #%%
 
-#%%
-# === Midland, TX line chart ===
-midland = long_df[long_df['RegionName'] == 'Midland, TX'].copy()
-midland['HomeValue'] = pd.to_numeric(midland['HomeValue'], errors='coerce')
-midland = midland.dropna(subset=['HomeValue'])
-midland_avg = midland.groupby('Date')['HomeValue'].mean().reset_index()
 
+
+#%%
+# --- Begin “Worst Cities” Section ---
+# Filter only cities in states with decent quality (>=70)
+high_quality = state_scores[state_scores['StateScore'] >= 70]['StateName'].tolist()
+df_good_states = full_data[full_data['StateName'].isin(high_quality)]
+
+# If you want the opposite (i.e., bad states), invert:
+bad_states = state_scores[state_scores['StateScore'] < 70]['StateName'].tolist()
+df_bad_states = full_data[full_data['StateName'].isin(bad_states)]
+
+# Compute a “DangerScore”: high housing growth (bad), low income growth (bad), low state score (bad)
+df_bad_states = df_bad_states.copy()
+df_bad_states['DangerScore'] = (
+    df_bad_states['PercentChange'] * 0.5
+    - df_bad_states['IncomePercentChange'] * 0.3
+    - df_bad_states['StateScore'] * 0.2
+)
+
+# Rank worst (highest DangerScore)
+worst10 = df_bad_states.sort_values('DangerScore', ascending=False).head(10)
+
+# --- Begin “Worst Cities” Section ---
+st.subheader("Top 10 Worst Cities to Live In")
+
+# Show table first
+st.dataframe(
+    worst10[[
+        'RegionName','StateName','ZHVI_2015','ZHVI_2024','PercentChange',
+        'Income_2015','Income_2023','IncomePercentChange','StateScore','DangerScore'
+    ]].style.format({
+        'ZHVI_2015':'${:,.0f}','ZHVI_2024':'${:,.0f}','PercentChange':'{:.2f}%',
+        'Income_2015':'${:,.0f}','Income_2023':'${:,.0f}','IncomePercentChange':'{:.2f}%',
+        'StateScore':'{:.1f}','DangerScore':'{:.2f}'
+    })
+)
+
+# Then the line chart
+worst_city = worst10.iloc[0]['RegionName']
+chart_df = long_df[long_df['RegionName'] == worst_city].dropna(subset=['HomeValue'])
+chart_avg = chart_df.groupby('Date')['HomeValue'].mean().reset_index()
+
+st.subheader(f"{worst_city} Housing Data")
 fig = px.line(
-    midland,
+    chart_avg,
     x='Date',
     y='HomeValue',
-    title='Midland, TX Home Values Over Time',
-    labels={'HomeValue': 'ZHVI ($)', 'Date': 'Date'},
-    hover_data={'Date': True, 'HomeValue': ':.2f'}
+    title=f"{worst_city} ZHVI Over Time",
+    labels={'HomeValue': 'ZHVI ($)', 'Date': 'Date'}
 )
-fig.update_layout(
-    xaxis_title='Date',
-    yaxis_title='ZHVI ($)',
-    hovermode='x unified',
-    template='plotly_white'
-)
-fig.show()
-
-st.title("Midland, TX Housing Data")
-fig = px.line(midland_avg, x="Date", y="HomeValue", title="Midland, TX ZHVI Over Time")
+fig.update_layout(xaxis_title='Date', yaxis_title='ZHVI ($)', template='plotly_white')
 st.plotly_chart(fig)
+# --- End Section ---
+#%%
+
+
+
+#%%
+# Aggregate national median home value
+national = long_df.groupby("Date")["HomeValue"].median().reset_index()
+national = national.dropna()
+
+# Rename for Prophet format
+prophet_df = national.rename(columns={"Date": "ds", "HomeValue": "y"})
+
+# Train Prophet model
+model = Prophet()
+model.fit(prophet_df)
+
+# Forecast next 5 years (60 months)
+future = model.make_future_dataframe(periods=60, freq='M')
+forecast = model.predict(future)
+
+# Plot
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=prophet_df["ds"], y=prophet_df["y"], name="Actual", line=dict(color='blue')))
+fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast["yhat"], name="Predicted", line=dict(color='orange', dash='dash')))
+fig.update_layout(
+    title="Projected US Median Housing Prices (Next 5 Years)",
+    xaxis_title="Date",
+    yaxis_title="ZHVI ($)",
+    hovermode="x unified",
+    template="plotly_white"
+)
+
+st.subheader("US Housing Price Forecast")
+st.plotly_chart(fig)
+
+
+
+# Get 2025 actual and 2030 predicted values
+price_2025 = national[national["Date"].dt.year == 2025]["HomeValue"].median()
+price_2030 = forecast[forecast["ds"].dt.year == 2030]["yhat"].median()
+
+# Calculate percent increase
+percent_diff = ((price_2030 - price_2025) / price_2025) * 100
+
+# Display result
+st.markdown(f"**Projected Percent Increase in US Median Home Prices (2025 → 2030):** {percent_diff:.2f}%")
+
 #%%
