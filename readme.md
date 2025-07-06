@@ -43,9 +43,9 @@ I found these websites useful in developing this software:
 * [Pandas Tutorial](https://www.youtube.com/watch?v=2uvysYbKdjM)
 * [Plotly Documentation](https://plotly.com/python/)
 * [Streamlit Documentation](https://docs.streamlit.io/library/get-started)
-* [Zillow Data] (https://www.zillow.com/research/data)
-* [BEA Income Data] (https://www.bea.gov/data/income-saving/personal-income-county-metro-and-other-areas)
-*  [Best States] (https://www.usnews.com/news/best-states/rankings)
+* [Zillow Data](https://www.zillow.com/research/data)
+* [BEA Income Data](https://www.bea.gov/data/income-saving/personal-income-county-metro-and-other-areas)
+* [Best States](https://www.usnews.com/news/best-states/rankings)
 
 ## Future Work
 
